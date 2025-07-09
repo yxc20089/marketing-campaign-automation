@@ -22,8 +22,8 @@ if (!fs.existsSync(dataDir)) {
 }
 
 // Start Next.js development server
-console.log('🔧 Starting Next.js development server...');
-const nextProcess = spawn('npm', ['run', 'dev'], {
+console.log('🔧 Starting Next.js development server on port 3001...');
+const nextProcess = spawn('npm', ['run', 'dev', '--', '-p', '3001'], {
   cwd: __dirname,
   stdio: 'inherit',
   shell: true

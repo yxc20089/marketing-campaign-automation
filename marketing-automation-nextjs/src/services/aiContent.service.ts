@@ -3,6 +3,7 @@ import axios from 'axios';
 import { logger } from '../lib/utils/logger';
 import { getDb } from '../lib/database';
 import { AppError } from '../lib/utils/errors';
+import { loadUserConfig } from '../lib/utils/config';
 
 interface ContentGenerationOptions {
   topic: string;
@@ -22,24 +23,26 @@ interface GeneratedContent {
 
 export class ContentGenerationService {
   private openai: OpenAI | null = null;
-  private aiProvider: string;
-  private ollamaBaseUrl: string;
-  private ollamaModel: string;
+  private userConfig: any = null;
 
   constructor() {
-    this.aiProvider = process.env.AI_PROVIDER || 'openai';
-    this.ollamaBaseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
-    this.ollamaModel = process.env.OLLAMA_MODEL || 'llama2';
+    this.initializeConfig();
+  }
 
-    if (this.aiProvider === 'openai' && process.env.OPENAI_API_KEY) {
+  private async initializeConfig() {
+    this.userConfig = await loadUserConfig();
+    
+    if (this.userConfig?.aiProvider === 'openai' && this.userConfig?.openAiKey) {
       this.openai = new OpenAI({
-        apiKey: process.env.OPENAI_API_KEY
+        apiKey: this.userConfig.openAiKey
       });
     }
   }
 
   // Research topic using AI
   async researchTopic(topic: string): Promise<string> {
+    await this.initializeConfig();
+    
     const prompt = `Provide a detailed overview of "${topic}" including:
     - Current relevance and why it's trending
     - Key facts and statistics
@@ -48,7 +51,9 @@ export class ContentGenerationService {
     Keep the response concise and informative.`;
 
     try {
-      if (this.aiProvider === 'openai' && this.openai) {
+      const aiProvider = this.userConfig?.aiProvider || 'openai';
+      
+      if (aiProvider === 'openai' && this.openai) {
         const response = await this.openai.chat.completions.create({
           model: 'gpt-4o-mini',
           messages: [{ role: 'user', content: prompt }],
@@ -56,9 +61,12 @@ export class ContentGenerationService {
           max_tokens: 500
         });
         return response.choices[0].message.content || '';
+      } else if (aiProvider === 'gemini') {
+        return await this.callGemini(prompt);
+      } else if (aiProvider === 'lmstudio') {
+        return await this.callLMStudio(prompt);
       } else {
-        // Use Ollama
-        return await this.callOllama(prompt);
+        throw new AppError('AI provider not configured', 400);
       }
     } catch (error) {
       logger.error('Error researching topic:', error);
@@ -78,9 +86,11 @@ export class ContentGenerationService {
     const prompt = this.buildContentPrompt(topic, research, platforms);
     
     try {
+      await this.initializeConfig();
       let response: any;
+      const aiProvider = this.userConfig?.aiProvider || 'openai';
       
-      if (this.aiProvider === 'openai' && this.openai) {
+      if (aiProvider === 'openai' && this.openai) {
         const completion = await this.openai.chat.completions.create({
           model: 'gpt-4o',
           messages: [{ role: 'user', content: prompt }],
@@ -89,9 +99,14 @@ export class ContentGenerationService {
           response_format: { type: 'json_object' }
         });
         response = JSON.parse(completion.choices[0].message.content || '{}');
+      } else if (aiProvider === 'gemini') {
+        const geminiResponse = await this.callGemini(prompt);
+        response = JSON.parse(geminiResponse);
+      } else if (aiProvider === 'lmstudio') {
+        const lmStudioResponse = await this.callLMStudio(prompt);
+        response = JSON.parse(lmStudioResponse);
       } else {
-        const ollamaResponse = await this.callOllama(prompt);
-        response = JSON.parse(ollamaResponse);
+        throw new AppError('AI provider not configured', 400);
       }
 
       const contents: GeneratedContent[] = [];
@@ -176,10 +191,77 @@ The output must be a valid JSON object with keys: ${platforms.map(p => `'${p}_po
 Each post object should have: title, body, hashtags (for xhs), and image_prompt fields.`;
   }
 
-  private async callOllama(prompt: string): Promise<string> {
+  // Call Google Gemini API
+  private async callGemini(prompt: string): Promise<string> {
+    if (!this.userConfig?.geminiApiKey) {
+      throw new AppError('Gemini API key not configured', 400);
+    }
+
     try {
-      const response = await axios.post(`${this.ollamaBaseUrl}/api/generate`, {
-        model: this.ollamaModel,
+      const response = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${this.userConfig.geminiApiKey}`,
+        {
+          contents: [{
+            parts: [{
+              text: prompt
+            }]
+          }]
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      
+      return response.data.candidates[0].content.parts[0].text;
+    } catch (error) {
+      logger.error('Error calling Gemini:', error);
+      throw new AppError('Failed to generate content with Gemini', 500);
+    }
+  }
+
+  // Call LM Studio API
+  private async callLMStudio(prompt: string): Promise<string> {
+    if (!this.userConfig?.lmStudioUrl) {
+      throw new AppError('LM Studio URL not configured', 400);
+    }
+
+    try {
+      const response = await axios.post(
+        `${this.userConfig.lmStudioUrl}/v1/chat/completions`,
+        {
+          model: this.userConfig.lmStudioModel || 'local-model',
+          messages: [
+            {
+              role: 'user',
+              content: prompt
+            }
+          ],
+          temperature: 0.7,
+          max_tokens: 1500
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      
+      return response.data.choices[0].message.content;
+    } catch (error) {
+      logger.error('Error calling LM Studio:', error);
+      throw new AppError('Failed to generate content with LM Studio', 500);
+    }
+  }
+
+  private async callOllama(prompt: string): Promise<string> {
+    const ollamaBaseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+    const ollamaModel = process.env.OLLAMA_MODEL || 'llama2';
+    
+    try {
+      const response = await axios.post(`${ollamaBaseUrl}/api/generate`, {
+        model: ollamaModel,
         prompt,
         stream: false
       });

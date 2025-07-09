@@ -1,6 +1,7 @@
 import { logger } from '../lib/utils/logger';
 import { GoogleDocsService } from './googleDocs.service';
 import { AppError } from '../lib/utils/errors';
+import { loadUserConfig } from '../lib/utils/config';
 
 export interface PublishingProvider {
   name: string;
@@ -20,40 +21,39 @@ export class PublishingValidatorService {
   // Check all publishing providers and return their status
   async validatePublishingProviders(): Promise<PublishingProvider[]> {
     const providers: PublishingProvider[] = [];
+    
+    // Load user configuration
+    const userConfig = await loadUserConfig();
 
     // Check WeChat
-    const wechatRequired = ['WECHAT_APP_ID', 'WECHAT_APP_SECRET'];
-    const wechatMissing = wechatRequired.filter(key => !process.env[key]);
+    const wechatConfigured = !!(userConfig?.wechatAppId && userConfig?.wechatAppSecret);
     providers.push({
       name: 'WeChat Official Account',
       platform: 'wechat',
-      configured: wechatMissing.length === 0,
-      required_keys: wechatRequired,
-      missing_keys: wechatMissing
+      configured: wechatConfigured,
+      required_keys: ['wechatAppId', 'wechatAppSecret'],
+      missing_keys: wechatConfigured ? [] : ['wechatAppId', 'wechatAppSecret']
     });
 
     // Check XHS
-    const xhsRequired = ['XHS_COOKIE'];
-    const xhsMissing = xhsRequired.filter(key => !process.env[key]);
+    const xhsConfigured = !!(userConfig?.xhsCookie);
     providers.push({
       name: 'Xiao Hongshu (Semi-automated)',
       platform: 'xhs',
-      configured: xhsMissing.length === 0,
-      required_keys: xhsRequired,
-      missing_keys: xhsMissing
+      configured: xhsConfigured,
+      required_keys: ['xhsCookie'],
+      missing_keys: xhsConfigured ? [] : ['xhsCookie']
     });
 
-    // Check Google Docs
-    const googleDocsRequired = ['GOOGLE_DOCS_CREDENTIALS'];
-    const googleDocsMissing = googleDocsRequired.filter(key => !process.env[key]);
-    const googleDocsConfigured = googleDocsMissing.length === 0 && this.googleDocsService.isConfigured();
+    // Check Google Docs - need both credentials and folder ID
+    const googleDocsConfigured = !!(userConfig?.googleDocsCredentials && userConfig?.googleDocsFolderId);
     
     providers.push({
       name: 'Google Docs',
       platform: 'googledocs',
       configured: googleDocsConfigured,
-      required_keys: googleDocsRequired,
-      missing_keys: googleDocsMissing
+      required_keys: ['googleDocsCredentials', 'googleDocsFolderId'],
+      missing_keys: googleDocsConfigured ? [] : ['googleDocsCredentials']
     });
 
     return providers;

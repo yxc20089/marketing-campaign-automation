@@ -98,9 +98,27 @@ src/
     └── xhs.service.ts               # XHS integration
 ```
 
-## Environment Variables
+## Configuration
 
-The system automatically creates a `.env` file with your configuration. Key variables:
+The system uses two types of configuration:
+
+### System Configuration (.env.local)
+Essential system settings that should be configured before running:
+
+```env
+# Database
+DATABASE_PATH=./data/marketing.db
+
+# Security
+JWT_SECRET=your-secret-key-change-this-in-production
+
+# Rate Limiting  
+RATE_LIMIT_WINDOW_MS=900000
+RATE_LIMIT_MAX_REQUESTS=100
+```
+
+### User Configuration (via UI)
+API keys and service credentials are entered through the web interface and saved securely:
 
 ```env
 # Core APIs

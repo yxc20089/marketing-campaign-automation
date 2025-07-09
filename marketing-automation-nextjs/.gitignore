@@ -39,3 +39,15 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Environment files
+.env
+.env.local
+.env.production
+
+# User configuration
+user-config.json
+
+# Database
+*.db
+*.sqlite

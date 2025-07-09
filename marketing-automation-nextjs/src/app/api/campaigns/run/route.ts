@@ -1,12 +1,15 @@
 import { NextResponse } from 'next/server';
 import { CampaignRunner } from '@/services/campaign.service';
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
+    const body = await request.json().catch(() => ({}));
+    const { mode = 'auto', customTopic } = body;
+    
     const campaignRunner = new CampaignRunner();
     
     // Run the campaign
-    const result = await campaignRunner.runCampaign();
+    const result = await campaignRunner.runCampaign(mode, customTopic);
     
     return NextResponse.json({
       success: true,

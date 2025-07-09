@@ -3,6 +3,7 @@ import axios from 'axios';
 import { logger } from '../lib/utils/logger';
 import { getDb } from '../lib/database';
 import { AppError } from '../lib/utils/errors';
+import { loadUserConfig } from '../lib/utils/config';
 
 interface RSSFeed {
   url: string;
@@ -132,6 +133,9 @@ export class TrendService {
   private deduplicateTrends(trends: TrendItem[]): TrendItem[] {
     const seen = new Set<string>();
     return trends.filter(trend => {
+      if (!trend.title) {
+        return false; // Skip trends without titles
+      }
       const normalizedTitle = trend.title.toLowerCase().trim();
       if (seen.has(normalizedTitle)) {
         return false;
@@ -190,5 +194,10 @@ export class TrendService {
        WHERE id = ?`,
       topicId
     );
+  }
+
+  // Get user configuration
+  async getUserConfig(): Promise<any> {
+    return await loadUserConfig();
   }
 }

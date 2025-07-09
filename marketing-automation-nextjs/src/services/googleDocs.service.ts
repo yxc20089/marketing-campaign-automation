@@ -1,8 +1,8 @@
 import { google } from 'googleapis';
 import { logger } from '../lib/utils/logger';
 import { AppError } from '../lib/utils/errors';
+import { loadUserConfig } from '../lib/utils/config';
 import fs from 'fs';
-import path from 'path';
 
 interface GoogleDocsContent {
   title: string;
@@ -15,47 +15,83 @@ interface GoogleDocsContent {
 export class GoogleDocsService {
   private docs: any;
   private drive: any;
-  private folderId: string;
+  private folderId: string = '';
+  private initialized: boolean = false;
+  private lastConfigCheck: number = 0;
+  private configCheckInterval: number = 30000; // 30 seconds
 
   constructor() {
-    this.folderId = process.env.GOOGLE_DOCS_FOLDER_ID || '';
     this.initializeGoogleAPI();
   }
 
-  private initializeGoogleAPI() {
-    const credentialsPath = process.env.GOOGLE_DOCS_CREDENTIALS;
+  private async initializeGoogleAPI() {
+    // Skip if recently initialized
+    const now = Date.now();
+    if (this.initialized && (now - this.lastConfigCheck) < this.configCheckInterval) {
+      return;
+    }
     
-    if (!credentialsPath) {
-      logger.warn('Google Docs credentials not configured');
+    const userConfig = await loadUserConfig();
+    this.folderId = userConfig?.googleDocsFolderId || '';
+    const credentialsInput = userConfig?.googleDocsCredentials;
+    
+    if (!credentialsInput) {
+      if (!this.initialized) {
+        logger.warn('Google Docs credentials not configured');
+      }
       return;
     }
 
     try {
-      // Check if credentials file exists
-      if (!fs.existsSync(credentialsPath)) {
-        logger.warn(`Google Docs credentials file not found at: ${credentialsPath}`);
+      let auth;
+      
+      // Check the format of credentials
+      if (credentialsInput.startsWith('{')) {
+        // It's JSON service account credentials
+        const credentials = JSON.parse(credentialsInput);
+        auth = new google.auth.GoogleAuth({
+          credentials,
+          scopes: [
+            'https://www.googleapis.com/auth/documents',
+            'https://www.googleapis.com/auth/drive'
+          ]
+        });
+      } else if (credentialsInput.startsWith('/') || credentialsInput.includes('.json')) {
+        // It's a file path to service account credentials
+        if (!fs.existsSync(credentialsInput)) {
+          logger.warn(`Google Docs credentials file not found at: ${credentialsInput}`);
+          return;
+        }
+        const credentials = JSON.parse(fs.readFileSync(credentialsInput, 'utf8'));
+        auth = new google.auth.GoogleAuth({
+          credentials,
+          scopes: [
+            'https://www.googleapis.com/auth/documents',
+            'https://www.googleapis.com/auth/drive'
+          ]
+        });
+      } else if (credentialsInput.startsWith('AIza')) {
+        // It's a Google Cloud API Key
+        auth = credentialsInput; // Use API key directly
+        logger.info('Using Google Cloud API Key for authentication');
+      } else {
+        logger.warn('Google Docs credentials format not recognized. Expected JSON, file path, or API key.');
         return;
       }
-
-      // Load service account credentials
-      const credentials = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'));
-      
-      // Create auth client
-      const auth = new google.auth.GoogleAuth({
-        credentials,
-        scopes: [
-          'https://www.googleapis.com/auth/documents',
-          'https://www.googleapis.com/auth/drive'
-        ]
-      });
 
       // Initialize API clients
       this.docs = google.docs({ version: 'v1', auth });
       this.drive = google.drive({ version: 'v3', auth });
       
-      logger.info('Google Docs API initialized successfully');
+      if (!this.initialized) {
+        logger.info('Google Docs API initialized successfully');
+      }
+      
+      this.initialized = true;
+      this.lastConfigCheck = Date.now();
     } catch (error) {
       logger.error('Failed to initialize Google Docs API:', error);
+      this.initialized = false;
     }
   }
 
@@ -75,7 +111,18 @@ export class GoogleDocsService {
       const timestamp = new Date().toISOString().split('T')[0];
       const documentTitle = `${content.platform.toUpperCase()} - ${content.title} (${timestamp})`;
 
-      // Create a new document
+      // Check if we're using an API key (which has limitations)
+      const userConfig = await loadUserConfig();
+      const isApiKey = userConfig?.googleDocsCredentials?.startsWith('AIza');
+      
+      if (isApiKey) {
+        // API keys have limitations - provide alternative approach
+        const fallbackContent = this.createFallbackContent(content);
+        logger.warn('API key authentication has limitations. Consider using service account for full functionality.');
+        return fallbackContent;
+      }
+
+      // Create a new document with full authentication
       const doc = await this.docs.documents.create({
         requestBody: {
           title: documentTitle
@@ -253,5 +300,34 @@ export class GoogleDocsService {
       logger.error('Error getting folder info:', error);
       return null;
     }
+  }
+
+  // Fallback method for API key users
+  private createFallbackContent(content: GoogleDocsContent): string {
+    const timestamp = new Date().toISOString().split('T')[0];
+    const documentTitle = `${content.platform.toUpperCase()} - ${content.title} (${timestamp})`;
+    
+    // Create a formatted text version that users can copy-paste
+    const formattedContent = `
+=== ${documentTitle} ===
+
+Generated on: ${new Date().toLocaleString()}
+Platform: ${content.platform.toUpperCase()}
+Title: ${content.title}
+
+${content.hashtags ? `Hashtags: ${content.hashtags}` : ''}
+
+Content:
+${content.body}
+
+---
+Generated by Marketing Automation System
+    `.trim();
+    
+    // Log the content for user to copy
+    logger.info('Generated content (copy this to create your Google Doc manually):');
+    logger.info(formattedContent);
+    
+    return `Content generated. With API key authentication, please manually create a Google Doc with this content:\n\n${formattedContent}`;
   }
 }

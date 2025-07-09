@@ -19,7 +19,7 @@ export class CampaignRunner {
     this.validator = new PublishingValidatorService();
   }
 
-  async runCampaign(): Promise<CampaignResult> {
+  async runCampaign(mode: 'auto' | 'custom' = 'auto', customTopic?: string): Promise<CampaignResult> {
     try {
       // Initialize database
       const db = await getDb();
@@ -27,18 +27,53 @@ export class CampaignRunner {
       // Validate publishing providers before proceeding
       await this.validator.validateBeforeCampaign();
       
-      // Discover trends
-      const trends = await this.trendService.getPendingTrends(5);
+      let selectedTrend: any;
+      let trendsFound = 0;
       
-      if (trends.length === 0) {
-        return {
-          trendsFound: 0,
-          processed: null
+      if (mode === 'custom' && customTopic) {
+        // Use custom topic
+        selectedTrend = {
+          id: Date.now(), // Temporary ID
+          title: customTopic,
+          source: 'Custom Topic',
+          status: 'pending'
         };
-      }
+        trendsFound = 1;
+        console.log('Debug: Using custom topic:', customTopic);
+      } else {
+        // Auto-discover trends
+        const { rssFeeds } = await this.trendService.getUserConfig();
+        if (rssFeeds && rssFeeds.length > 0) {
+          await this.trendService.aggregateTrends({
+            rssFeeds,
+            googleTrends: true
+          });
+        }
+        
+        // Get pending trends from database
+        const trends = await this.trendService.getPendingTrends(5);
+        trendsFound = trends.length;
+        
+        console.log('Debug: Found trends:', trends.length);
+        if (trends.length > 0) {
+          console.log('Debug: First trend:', JSON.stringify(trends[0], null, 2));
+        }
+        
+        if (trends.length === 0) {
+          return {
+            trendsFound: 0,
+            processed: null
+          };
+        }
 
-      // Process the first trend
-      const selectedTrend = trends[0];
+        selectedTrend = trends[0];
+      }
+      
+      // Validate the selected trend
+      if (!selectedTrend || !selectedTrend.title) {
+        console.error('Debug: Selected trend validation failed:', selectedTrend);
+        throw new Error('Selected trend is invalid or missing title');
+      }
       
       // Generate content
       const content = await this.contentService.generateContent({
@@ -54,7 +89,7 @@ export class CampaignRunner {
       );
 
       return {
-        trendsFound: trends.length,
+        trendsFound: trendsFound,
         processed: selectedTrend.title,
         contentGenerated: true
       };

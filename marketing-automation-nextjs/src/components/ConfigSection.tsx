@@ -1,15 +1,21 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 interface ConfigSectionProps {
   onConfigSaved: () => void;
 }
 
+const CONFIG_STORAGE_KEY = 'marketing-automation-config';
+
 const ConfigSection: React.FC<ConfigSectionProps> = ({ onConfigSaved }) => {
   const [config, setConfig] = useState({
     serpApiKey: '',
+    aiProvider: 'openai',
     openAiKey: '',
+    geminiApiKey: '',
+    lmStudioUrl: 'http://localhost:1234',
+    lmStudioModel: 'llama-3.2-3b-instruct',
     wechatAppId: '',
     wechatAppSecret: '',
     xhsCookie: '',
@@ -22,29 +28,75 @@ const ConfigSection: React.FC<ConfigSectionProps> = ({ onConfigSaved }) => {
   });
 
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [autoSaved, setAutoSaved] = useState(false);
+
+  // Load configuration from localStorage on component mount
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        // First try to load from localStorage
+        const savedConfig = localStorage.getItem(CONFIG_STORAGE_KEY);
+        if (savedConfig) {
+          const parsed = JSON.parse(savedConfig);
+          setConfig(parsed);
+        } else {
+          // If not in localStorage, try to load from server
+          const response = await fetch('/api/config');
+          if (response.ok) {
+            const serverConfig = await response.json();
+            if (serverConfig.serpApiKey || serverConfig.openAiKey) {
+              setConfig(serverConfig);
+              // Save to localStorage for next time
+              localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(serverConfig));
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error loading configuration:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadConfig();
+  }, []);
 
   const handleInputChange = (field: string, value: string) => {
-    setConfig(prev => ({ ...prev, [field]: value }));
+    const newConfig = { ...config, [field]: value };
+    setConfig(newConfig);
+    // Save to localStorage as user types
+    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(newConfig));
+    
+    // Show auto-saved indicator
+    setAutoSaved(true);
+    setTimeout(() => setAutoSaved(false), 2000);
   };
 
   const handleRssFeedChange = (index: number, field: 'url' | 'name', value: string) => {
     const newFeeds = [...config.rssFeeds];
     newFeeds[index][field] = value;
-    setConfig(prev => ({ ...prev, rssFeeds: newFeeds }));
+    const newConfig = { ...config, rssFeeds: newFeeds };
+    setConfig(newConfig);
+    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(newConfig));
   };
 
   const addRssFeed = () => {
-    setConfig(prev => ({
-      ...prev,
-      rssFeeds: [...prev.rssFeeds, { url: '', name: '' }]
-    }));
+    const newConfig = {
+      ...config,
+      rssFeeds: [...config.rssFeeds, { url: '', name: '' }]
+    };
+    setConfig(newConfig);
+    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(newConfig));
   };
 
   const removeRssFeed = (index: number) => {
-    setConfig(prev => ({
-      ...prev,
-      rssFeeds: prev.rssFeeds.filter((_, i) => i !== index)
-    }));
+    const newConfig = {
+      ...config,
+      rssFeeds: config.rssFeeds.filter((_, i) => i !== index)
+    };
+    setConfig(newConfig);
+    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(newConfig));
   };
 
   const handleSave = async () => {
@@ -57,6 +109,8 @@ const ConfigSection: React.FC<ConfigSectionProps> = ({ onConfigSaved }) => {
       });
       
       if (response.ok) {
+        // Configuration saved to server successfully
+        localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(config));
         onConfigSaved();
       } else {
         alert('Failed to save configuration. Please check your inputs.');
@@ -69,12 +123,55 @@ const ConfigSection: React.FC<ConfigSectionProps> = ({ onConfigSaved }) => {
     }
   };
 
+  const clearConfiguration = () => {
+    if (confirm('Are you sure you want to clear all configuration? This cannot be undone.')) {
+      const emptyConfig = {
+        serpApiKey: '',
+        aiProvider: 'openai',
+        openAiKey: '',
+        geminiApiKey: '',
+        lmStudioUrl: 'http://localhost:1234',
+        lmStudioModel: 'llama-3.2-3b-instruct',
+        wechatAppId: '',
+        wechatAppSecret: '',
+        xhsCookie: '',
+        googleDocsCredentials: '',
+        googleDocsFolderId: '',
+        rssFeeds: [
+          { url: 'https://techcrunch.com/feed/', name: 'TechCrunch' },
+          { url: 'https://www.theverge.com/rss/index.xml', name: 'The Verge' }
+        ]
+      };
+      setConfig(emptyConfig);
+      localStorage.removeItem(CONFIG_STORAGE_KEY);
+    }
+  };
+
+  if (loading) {
+    return (
+      <section className="bg-white p-8 rounded-xl shadow-lg border border-gray-200">
+        <div className="text-center py-8">
+          <i className="fa-solid fa-spinner fa-spin text-3xl text-blue-500"></i>
+          <p className="mt-4 text-gray-600">Loading configuration...</p>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="bg-white p-8 rounded-xl shadow-lg border border-gray-200">
-      <h2 className="text-2xl font-bold mb-6 flex items-center">
-        <i className="fa-solid fa-cogs h-6 w-6 mr-3 text-blue-500"></i>
-        Configuration
-      </h2>
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-2xl font-bold flex items-center">
+          <i className="fa-solid fa-cogs h-6 w-6 mr-3 text-blue-500"></i>
+          Configuration
+        </h2>
+        {autoSaved && (
+          <div className="text-sm text-green-600 flex items-center animate-pulse">
+            <i className="fa-solid fa-check-circle mr-2"></i>
+            Auto-saved locally
+          </div>
+        )}
+      </div>
       
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         <div>
@@ -94,18 +191,91 @@ const ConfigSection: React.FC<ConfigSectionProps> = ({ onConfigSaved }) => {
               />
             </div>
             <div>
-              <label htmlFor="openai-key" className="block text-sm font-medium text-gray-700">
-                OpenAI API Key (for Content Generation)
+              <label htmlFor="ai-provider" className="block text-sm font-medium text-gray-700">
+                AI Provider for Content Generation
               </label>
-              <input
-                type="password"
-                id="openai-key"
-                value={config.openAiKey}
-                onChange={(e) => handleInputChange('openAiKey', e.target.value)}
-                placeholder="Enter your OpenAI API key"
-                className="form-input mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-              />
+              <select
+                id="ai-provider"
+                value={config.aiProvider}
+                onChange={(e) => handleInputChange('aiProvider', e.target.value)}
+                className="form-select mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+              >
+                <option value="openai">OpenAI (GPT-4/GPT-3.5)</option>
+                <option value="gemini">Google Gemini</option>
+                <option value="lmstudio">LM Studio (Local)</option>
+              </select>
             </div>
+            
+            {config.aiProvider === 'openai' && (
+              <div>
+                <label htmlFor="openai-key" className="block text-sm font-medium text-gray-700">
+                  OpenAI API Key
+                </label>
+                <input
+                  type="password"
+                  id="openai-key"
+                  value={config.openAiKey}
+                  onChange={(e) => handleInputChange('openAiKey', e.target.value)}
+                  placeholder="Enter your OpenAI API key"
+                  className="form-input mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                />
+              </div>
+            )}
+            
+            {config.aiProvider === 'gemini' && (
+              <div>
+                <label htmlFor="gemini-key" className="block text-sm font-medium text-gray-700">
+                  Google Gemini API Key
+                </label>
+                <input
+                  type="password"
+                  id="gemini-key"
+                  value={config.geminiApiKey}
+                  onChange={(e) => handleInputChange('geminiApiKey', e.target.value)}
+                  placeholder="Enter your Google Gemini API key"
+                  className="form-input mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Get your API key from <a href="https://makersuite.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800">Google AI Studio</a>
+                </p>
+              </div>
+            )}
+            
+            {config.aiProvider === 'lmstudio' && (
+              <div className="space-y-3">
+                <div>
+                  <label htmlFor="lmstudio-url" className="block text-sm font-medium text-gray-700">
+                    LM Studio Server URL
+                  </label>
+                  <input
+                    type="url"
+                    id="lmstudio-url"
+                    value={config.lmStudioUrl}
+                    onChange={(e) => handleInputChange('lmStudioUrl', e.target.value)}
+                    placeholder="http://localhost:1234"
+                    className="form-input mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="lmstudio-model" className="block text-sm font-medium text-gray-700">
+                    Model Name
+                  </label>
+                  <input
+                    type="text"
+                    id="lmstudio-model"
+                    value={config.lmStudioModel}
+                    onChange={(e) => handleInputChange('lmStudioModel', e.target.value)}
+                    placeholder="llama-3.2-3b-instruct"
+                    className="form-input mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                  />
+                </div>
+                <div className="bg-blue-50 border-l-4 border-blue-400 p-3 rounded-r-lg">
+                  <p className="text-sm text-blue-700">
+                    <span className="font-bold">LM Studio Setup:</span> Download and run LM Studio, start the local server, and ensure it's running on the specified URL.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
 
           <h3 className="text-lg font-semibold mt-8 mb-4 border-b pb-2">Trend Sources</h3>
@@ -214,22 +384,30 @@ const ConfigSection: React.FC<ConfigSectionProps> = ({ onConfigSaved }) => {
                     <span className="font-bold">Google Docs Integration:</span> 
                     Automatically save all generated content to Google Docs for backup and collaboration.
                   </p>
+                  <p className="text-xs text-blue-600 mt-1">
+                    Supports: API Keys (easiest), Service Account JSON, or file paths
+                  </p>
                 </div>
               </div>
             </div>
 
             <div>
               <label htmlFor="google-docs-credentials" className="block text-sm font-medium text-gray-700">
-                Google Docs Service Account Credentials (JSON file path)
+                Google Cloud Credentials
               </label>
-              <input
-                type="text"
+              <textarea
                 id="google-docs-credentials"
                 value={config.googleDocsCredentials}
                 onChange={(e) => handleInputChange('googleDocsCredentials', e.target.value)}
-                placeholder="Path to service account credentials.json file"
-                className="form-input mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                placeholder="API Key (AIza...) or Service Account JSON or file path"
+                rows={2}
+                className="form-input mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm font-mono text-xs"
               />
+              <p className="mt-1 text-xs text-gray-500">
+                <span className="font-semibold">Easiest:</span> Google Cloud API Key (AIza...)
+                <br />
+                <span className="font-semibold">Advanced:</span> Service Account JSON or file path
+              </p>
             </div>
 
             <div>
@@ -249,7 +427,15 @@ const ConfigSection: React.FC<ConfigSectionProps> = ({ onConfigSaved }) => {
         </div>
       </div>
 
-      <div className="mt-8 text-right">
+      <div className="mt-8 flex justify-between">
+        <button
+          onClick={clearConfiguration}
+          className="btn inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+        >
+          <i className="fa-solid fa-trash mr-2"></i>
+          Clear Configuration
+        </button>
+        
         <button
           onClick={handleSave}
           disabled={saving}
