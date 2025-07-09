@@ -385,7 +385,7 @@ const ConfigSection: React.FC<ConfigSectionProps> = ({ onConfigSaved }) => {
                     Automatically save all generated content to Google Docs for backup and collaboration.
                   </p>
                   <p className="text-xs text-blue-600 mt-1">
-                    Supports: API Keys (easiest), Service Account JSON, or file paths
+                    Requires: Service Account JSON credentials (API keys not supported for document creation)
                   </p>
                 </div>
               </div>
@@ -393,20 +393,20 @@ const ConfigSection: React.FC<ConfigSectionProps> = ({ onConfigSaved }) => {
 
             <div>
               <label htmlFor="google-docs-credentials" className="block text-sm font-medium text-gray-700">
-                Google Cloud Credentials
+                Google Service Account JSON
               </label>
               <textarea
                 id="google-docs-credentials"
                 value={config.googleDocsCredentials}
                 onChange={(e) => handleInputChange('googleDocsCredentials', e.target.value)}
-                placeholder="API Key (AIza...) or Service Account JSON or file path"
-                rows={2}
+                placeholder="Service Account JSON credentials or file path"
+                rows={3}
                 className="form-input mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm font-mono text-xs"
               />
               <p className="mt-1 text-xs text-gray-500">
-                <span className="font-semibold">Easiest:</span> Google Cloud API Key (AIza...)
+                Paste the complete Service Account JSON from Google Cloud Console, or provide a file path to the JSON file.
                 <br />
-                <span className="font-semibold">Advanced:</span> Service Account JSON or file path
+                <span className="font-semibold">Note:</span> API keys cannot create documents and are not supported.
               </p>
             </div>
 

@@ -18,7 +18,7 @@ export class GoogleDocsService {
   private folderId: string = '';
   private initialized: boolean = false;
   private lastConfigCheck: number = 0;
-  private configCheckInterval: number = 30000; // 30 seconds
+  private configCheckInterval: number = 300000; // 5 minutes
 
   constructor() {
     this.initializeGoogleAPI();
@@ -118,8 +118,8 @@ export class GoogleDocsService {
       if (isApiKey) {
         // API keys have limitations - provide alternative approach
         const fallbackContent = this.createFallbackContent(content);
-        logger.warn('API key authentication has limitations. Consider using service account for full functionality.');
-        return fallbackContent;
+        logger.warn('API key authentication has limitations for document creation. Consider using service account for full functionality.');
+        throw new AppError('API key authentication cannot create documents. Please use service account credentials for Google Docs publishing.', 400);
       }
 
       // Create a new document with full authentication
@@ -137,8 +137,17 @@ export class GoogleDocsService {
 
       // Move document to specified folder if configured
       if (this.folderId) {
+        logger.info(`Moving document ${documentId} to folder ${this.folderId}`);
         await this.moveToFolder(documentId, this.folderId);
+      } else {
+        logger.info(`No folder ID configured, document ${documentId} will remain in root folder`);
       }
+
+      // Make the document publicly viewable so user can access it
+      await this.makeDocumentPublic(documentId);
+      
+      // Debug: Check document permissions
+      await this.debugDocumentPermissions(documentId);
 
       // Return the document URL
       return `https://docs.google.com/document/d/${documentId}/edit`;
@@ -150,90 +159,151 @@ export class GoogleDocsService {
 
   // Populate document with structured content
   private async populateDocument(documentId: string, content: GoogleDocsContent) {
-    const requests = [];
-
+    // Build the full content first
+    const fullContent = [];
+    
     // Add title
-    requests.push({
-      insertText: {
-        location: { index: 1 },
-        text: `${content.title}\n\n`
-      }
-    });
-
+    fullContent.push(content.title);
+    fullContent.push('');
+    
     // Add metadata
-    requests.push({
-      insertText: {
-        location: { index: 1 },
-        text: `Platform: ${content.platform.toUpperCase()}\n`
-      }
-    });
-
-    requests.push({
-      insertText: {
-        location: { index: 1 },
-        text: `Topic: ${content.topic}\n`
-      }
-    });
-
-    requests.push({
-      insertText: {
-        location: { index: 1 },
-        text: `Generated: ${new Date().toISOString()}\n\n`
-      }
-    });
-
+    fullContent.push(`Platform: ${content.platform.toUpperCase()}`);
+    fullContent.push(`Topic: ${content.topic}`);
+    fullContent.push(`Generated: ${new Date().toISOString()}`);
+    fullContent.push('');
+    
     // Add separator
-    requests.push({
-      insertText: {
-        location: { index: 1 },
-        text: '--- CONTENT ---\n\n'
-      }
-    });
-
+    fullContent.push('--- CONTENT ---');
+    fullContent.push('');
+    
     // Add main content
-    requests.push({
-      insertText: {
-        location: { index: 1 },
-        text: content.body + '\n\n'
-      }
-    });
-
+    fullContent.push(content.body);
+    fullContent.push('');
+    
     // Add hashtags if present
     if (content.hashtags) {
-      requests.push({
-        insertText: {
-          location: { index: 1 },
-          text: `Hashtags: ${content.hashtags}\n\n`
-        }
-      });
+      fullContent.push(`Hashtags: ${content.hashtags}`);
+      fullContent.push('');
     }
-
-    // Format the title as heading
-    requests.push({
-      updateParagraphStyle: {
-        range: {
-          startIndex: 1,
-          endIndex: content.title.length + 1
-        },
-        paragraphStyle: {
-          namedStyleType: 'HEADING_1'
-        },
-        fields: 'namedStyleType'
-      }
-    });
-
-    // Execute all requests
+    
+    const fullText = fullContent.join('\n');
+    
+    // Insert all content at once
     await this.docs.documents.batchUpdate({
       documentId,
       requestBody: {
-        requests: requests.reverse() // Reverse to maintain order when inserting at index 1
+        requests: [
+          {
+            insertText: {
+              location: { index: 1 },
+              text: fullText
+            }
+          },
+          {
+            updateParagraphStyle: {
+              range: {
+                startIndex: 1,
+                endIndex: content.title.length + 1
+              },
+              paragraphStyle: {
+                namedStyleType: 'HEADING_1'
+              },
+              fields: 'namedStyleType'
+            }
+          }
+        ]
       }
     });
+  }
+
+  // Make document publicly accessible and share with user
+  private async makeDocumentPublic(documentId: string) {
+    try {
+      // Method 1: Make it publicly accessible with link
+      await this.drive.permissions.create({
+        fileId: documentId,
+        requestBody: {
+          role: 'reader',
+          type: 'anyone'
+        }
+      });
+      logger.info(`Document ${documentId} made publicly accessible`);
+      
+      // Method 2: Also try to share with a specific email if available
+      const userConfig = await loadUserConfig();
+      if (userConfig?.userEmail) {
+        try {
+          await this.drive.permissions.create({
+            fileId: documentId,
+            requestBody: {
+              role: 'writer',
+              type: 'user',
+              emailAddress: userConfig.userEmail
+            }
+          });
+          logger.info(`Document ${documentId} shared with user email: ${userConfig.userEmail}`);
+        } catch (emailError) {
+          logger.warn('Could not share with user email:', emailError);
+        }
+      }
+      
+      // Method 3: Try to make it publicly editable (more permissive)
+      try {
+        await this.drive.permissions.create({
+          fileId: documentId,
+          requestBody: {
+            role: 'writer',
+            type: 'anyone'
+          }
+        });
+        logger.info(`Document ${documentId} made publicly editable`);
+      } catch (editError) {
+        logger.warn('Could not make document publicly editable:', editError);
+      }
+      
+    } catch (error) {
+      logger.error('Error setting document permissions:', error);
+      // Don't throw error as document creation was successful
+    }
+  }
+
+  // Debug document permissions
+  private async debugDocumentPermissions(documentId: string) {
+    try {
+      const permissions = await this.drive.permissions.list({
+        fileId: documentId,
+        fields: 'permissions(id,type,role,emailAddress)'
+      });
+      
+      logger.info(`Document ${documentId} permissions:`, JSON.stringify(permissions.data.permissions, null, 2));
+      
+      // Also get file info
+      const fileInfo = await this.drive.files.get({
+        fileId: documentId,
+        fields: 'id,name,webViewLink,webContentLink,permissions'
+      });
+      
+      logger.info(`Document ${documentId} info:`, JSON.stringify(fileInfo.data, null, 2));
+    } catch (error) {
+      logger.error('Error debugging document permissions:', error);
+    }
   }
 
   // Move document to a specific folder
   private async moveToFolder(documentId: string, folderId: string) {
     try {
+      // First, verify that the folder exists and is accessible
+      try {
+        await this.drive.files.get({
+          fileId: folderId,
+          fields: 'id, name'
+        });
+        logger.info(`Target folder ${folderId} exists and is accessible`);
+      } catch (folderError) {
+        logger.error(`Target folder ${folderId} is not accessible:`, folderError);
+        throw new Error(`Cannot access folder ${folderId}. Please check folder ID and permissions.`);
+      }
+
       // Get the document's current parents
       const file = await this.drive.files.get({
         fileId: documentId,
@@ -241,6 +311,7 @@ export class GoogleDocsService {
       });
 
       const previousParents = file.data.parents?.join(',') || '';
+      logger.info(`Document ${documentId} current parents: ${previousParents}`);
 
       // Move the file to the new folder
       await this.drive.files.update({
@@ -249,10 +320,19 @@ export class GoogleDocsService {
         removeParents: previousParents
       });
 
-      logger.info(`Moved document ${documentId} to folder ${folderId}`);
+      logger.info(`Successfully moved document ${documentId} to folder ${folderId}`);
+      
+      // Verify the move was successful
+      const updatedFile = await this.drive.files.get({
+        fileId: documentId,
+        fields: 'parents'
+      });
+      logger.info(`Document ${documentId} new parents: ${updatedFile.data.parents?.join(',')}`);
+      
     } catch (error) {
       logger.error('Error moving document to folder:', error);
-      // Don't throw error here as document creation was successful
+      // Don't throw error here as document creation was successful, but log the issue
+      logger.warn(`Document ${documentId} created successfully but could not be moved to folder ${folderId}`);
     }
   }
 

@@ -151,13 +151,13 @@ export class TrendService {
     for (const trend of trends) {
       try {
         // Check if trend already exists
-        const existing = await (db as any).get(
+        const existing = await (db as any).getAsync(
           'SELECT id FROM topics WHERE LOWER(title) = LOWER(?)',
           trend.title
         );
 
         if (!existing) {
-          await (db as any).run(
+          await (db as any).runAsync(
             `INSERT INTO topics (title, source, source_url, status) 
              VALUES (?, ?, ?, 'pending')`,
             trend.title,
@@ -175,7 +175,7 @@ export class TrendService {
   // Get pending trends from database
   async getPendingTrends(limit: number = 10): Promise<any[]> {
     const db = await getDb();
-    const trends = await (db as any).all(
+    const trends = await (db as any).allAsync(
       `SELECT * FROM topics 
        WHERE status = 'pending' 
        ORDER BY discovered_at DESC 
@@ -188,7 +188,7 @@ export class TrendService {
   // Mark trend as processed
   async markTrendProcessed(topicId: number): Promise<void> {
     const db = await getDb();
-    await (db as any).run(
+    await (db as any).runAsync(
       `UPDATE topics 
        SET status = 'processed', processed_at = CURRENT_TIMESTAMP 
        WHERE id = ?`,

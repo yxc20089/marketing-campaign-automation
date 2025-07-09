@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import ControlPanel from './ControlPanel';
 import SystemConsole from './SystemConsole';
+import ContentApproval from './ContentApproval';
 
 export interface LogEntry {
   timestamp: Date;
@@ -31,23 +32,7 @@ const MainApp: React.FC = () => {
       </div>
 
       <div className="lg:col-span-2 space-y-8">
-        <div>
-          <h2 className="text-xl font-bold mb-4 text-gray-800">Content for Approval</h2>
-          <div className="text-center py-12 px-6 bg-white rounded-xl shadow-lg border border-gray-200">
-            <i className="fa-solid fa-file-alt h-12 w-12 mx-auto text-gray-300"></i>
-            <h3 className="mt-2 text-sm font-medium text-gray-900">No Content Pending</h3>
-            <p className="mt-1 text-sm text-gray-500">Start a campaign to generate content for review.</p>
-          </div>
-        </div>
-
-        <div>
-          <h2 className="text-xl font-bold mb-4 text-gray-800">Published Content</h2>
-          <div className="text-center py-12 px-6 bg-white rounded-xl shadow-lg border border-gray-200">
-            <i className="fa-solid fa-check-circle h-12 w-12 mx-auto text-gray-300"></i>
-            <h3 className="mt-2 text-sm font-medium text-gray-900">No Content Published Yet</h3>
-            <p className="mt-1 text-sm text-gray-500">Approve generated content to see it here.</p>
-          </div>
-        </div>
+        <ContentApproval onLog={addLog} />
       </div>
     </section>
   );

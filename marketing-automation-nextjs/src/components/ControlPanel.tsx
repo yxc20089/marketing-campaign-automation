@@ -18,10 +18,10 @@ const ControlPanel: React.FC<ControlPanelProps> = ({ onLog }) => {
   useEffect(() => {
     checkPublishingProviders();
     
-    // Poll for updates every 10 seconds (reduced frequency)
+    // Poll for updates every 30 seconds (reduced frequency)
     const interval = setInterval(() => {
       checkPublishingProviders();
-    }, 10000);
+    }, 30000);
     
     return () => clearInterval(interval);
   }, []);

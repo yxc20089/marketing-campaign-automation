@@ -8,12 +8,12 @@ import { loadUserConfig } from '../lib/utils/config';
 interface ContentGenerationOptions {
   topic: string;
   topicId?: number;
-  platforms: ('wechat' | 'xhs')[];
+  platforms: ('wechat' | 'xhs' | 'googledocs')[];
   generateImage?: boolean;
 }
 
 interface GeneratedContent {
-  platform: 'wechat' | 'xhs';
+  platform: 'wechat' | 'xhs' | 'googledocs';
   title: string;
   body: string;
   hashtags?: string;
@@ -31,6 +31,12 @@ export class ContentGenerationService {
 
   private async initializeConfig() {
     this.userConfig = await loadUserConfig();
+    console.log('Debug: AI service config loaded:', {
+      aiProvider: this.userConfig?.aiProvider,
+      hasOpenAiKey: !!this.userConfig?.openAiKey,
+      hasGeminiKey: !!this.userConfig?.geminiApiKey,
+      hasLmStudioUrl: !!this.userConfig?.lmStudioUrl
+    });
     
     if (this.userConfig?.aiProvider === 'openai' && this.userConfig?.openAiKey) {
       this.openai = new OpenAI({
@@ -39,26 +45,52 @@ export class ContentGenerationService {
     }
   }
 
-  // Research topic using AI
+  // Research topic using AI with real-time search
   async researchTopic(topic: string): Promise<string> {
     await this.initializeConfig();
     
-    const prompt = `Provide a detailed overview of "${topic}" including:
-    - Current relevance and why it's trending
-    - Key facts and statistics
-    - Main arguments or perspectives
-    - Impact on society or industry
-    Keep the response concise and informative.`;
+    // First, try to get real-time search results
+    let searchResults = '';
+    try {
+      searchResults = await this.fetchSearchResults(topic);
+    } catch (error) {
+      logger.warn('Failed to fetch search results, using AI knowledge only:', error);
+    }
+    
+    // Create prompt with search results or fallback to AI knowledge
+    const prompt = searchResults
+      ? `Based on the following recent search results about "${topic}", provide a comprehensive analysis including:
+      - Current relevance and why it's trending
+      - Key facts and latest developments
+      - Main arguments or perspectives
+      - Impact on society or industry
+      
+      Recent Search Results:
+      ${searchResults}
+      
+      Provide a detailed summary incorporating these latest findings.`
+      : `Provide a detailed overview of "${topic}" including:
+      - Current relevance and why it's trending
+      - Key facts and statistics
+      - Main arguments or perspectives
+      - Impact on society or industry
+      Keep the response concise and informative. Note: Using AI knowledge only as search results unavailable.`;
 
     try {
       const aiProvider = this.userConfig?.aiProvider || 'openai';
       
-      if (aiProvider === 'openai' && this.openai) {
+      if (aiProvider === 'openai' && this.userConfig?.openAiKey) {
+        // Re-initialize OpenAI if not already done
+        if (!this.openai) {
+          this.openai = new OpenAI({
+            apiKey: this.userConfig.openAiKey
+          });
+        }
         const response = await this.openai.chat.completions.create({
-          model: 'gpt-4o-mini',
+          model: 'gpt-4.1-mini',
           messages: [{ role: 'user', content: prompt }],
           temperature: 0.7,
-          max_tokens: 500
+          max_tokens: 800
         });
         return response.choices[0].message.content || '';
       } else if (aiProvider === 'gemini') {
@@ -71,6 +103,49 @@ export class ContentGenerationService {
     } catch (error) {
       logger.error('Error researching topic:', error);
       throw new AppError('Failed to research topic', 500);
+    }
+  }
+
+  // Fetch search results using SerpAPI
+  private async fetchSearchResults(topic: string): Promise<string> {
+    if (!this.userConfig?.serpApiKey) {
+      throw new Error('SerpAPI key not configured');
+    }
+
+    try {
+      const response = await axios.get('https://serpapi.com/search', {
+        params: {
+          q: topic,
+          api_key: this.userConfig.serpApiKey,
+          engine: 'google',
+          num: 5, // Get top 5 results
+          hl: 'en'
+        }
+      });
+
+      const organicResults = response.data.organic_results || [];
+      const newsResults = response.data.news_results || [];
+      
+      // Combine organic and news results
+      const allResults = [...organicResults, ...newsResults];
+      
+      if (allResults.length === 0) {
+        throw new Error('No search results found');
+      }
+
+      // Format search results
+      const formattedResults = allResults.slice(0, 5).map((result, index) => {
+        return `${index + 1}. ${result.title}
+        ${result.snippet || result.summary || ''}
+        Source: ${result.source || result.link}
+        ${result.date ? `Date: ${result.date}` : ''}`;
+      }).join('\n\n');
+
+      logger.info(`Fetched ${allResults.length} search results for topic: ${topic}`);
+      return formattedResults;
+    } catch (error: any) {
+      logger.error('Error fetching search results:', error);
+      throw new Error(`Search failed: ${error.message}`);
     }
   }
 
@@ -90,9 +165,15 @@ export class ContentGenerationService {
       let response: any;
       const aiProvider = this.userConfig?.aiProvider || 'openai';
       
-      if (aiProvider === 'openai' && this.openai) {
+      if (aiProvider === 'openai' && this.userConfig?.openAiKey) {
+        // Re-initialize OpenAI if not already done
+        if (!this.openai) {
+          this.openai = new OpenAI({
+            apiKey: this.userConfig.openAiKey
+          });
+        }
         const completion = await this.openai.chat.completions.create({
-          model: 'gpt-4o',
+          model: 'gpt-4.1-mini',
           messages: [{ role: 'user', content: prompt }],
           temperature: 0.8,
           max_tokens: 1500,
@@ -171,6 +252,15 @@ export class ContentGenerationService {
       - Tone: Casual, trendy, enthusiastic
       - Format: Use line breaks, emojis, and numbered points
       - Hashtags: Include 5-7 relevant, trending hashtags
+      - Add an 'image_prompt' field with a description for DALL-E 3`,
+      
+      googledocs: `For 'googledocs_post': Create a comprehensive document for Google Docs.
+      - Title: Detailed and descriptive (max 60 characters)
+      - Body: 500-800 words, comprehensive and well-researched
+      - Tone: Professional, detailed, and informative
+      - Structure: Include introduction, main sections, and conclusion
+      - Format: Use proper headings, bullet points, and paragraphs
+      - Include: Key insights, data points, and actionable takeaways
       - Add an 'image_prompt' field with a description for DALL-E 3`
     };
 

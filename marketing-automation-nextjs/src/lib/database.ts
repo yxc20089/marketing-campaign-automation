@@ -6,6 +6,9 @@ import fs from 'fs/promises';
 const dbPath = process.env.DATABASE_PATH || './public/data/marketing.db';
 const dbDir = path.dirname(dbPath);
 
+// console.log('Debug: Database path:', dbPath);
+// console.log('Debug: Database directory:', dbDir);
+
 let db: sqlite3.Database | null = null;
 
 export async function initializeDatabase() {
@@ -75,6 +78,7 @@ async function createTables() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       approved_at DATETIME,
       published_at DATETIME,
+      published_url TEXT,
       FOREIGN KEY (topic_id) REFERENCES topics(id)
     )`,
 
@@ -101,6 +105,16 @@ async function createTables() {
 
   for (const query of queries) {
     await (db as any).runAsync(query);
+  }
+  
+  // Add migration for published_url column (for existing databases)
+  try {
+    await (db as any).runAsync(`ALTER TABLE content ADD COLUMN published_url TEXT`);
+  } catch (error: any) {
+    // Column already exists, ignore error
+    if (!error.message.includes('duplicate column name')) {
+      throw error;
+    }
   }
 
   console.log('Database tables created successfully');

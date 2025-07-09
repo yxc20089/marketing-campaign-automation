@@ -39,7 +39,7 @@ export class CampaignRunner {
           status: 'pending'
         };
         trendsFound = 1;
-        console.log('Debug: Using custom topic:', customTopic);
+        // console.log('Debug: Using custom topic:', customTopic);
       } else {
         // Auto-discover trends
         const { rssFeeds } = await this.trendService.getUserConfig();
@@ -54,10 +54,10 @@ export class CampaignRunner {
         const trends = await this.trendService.getPendingTrends(5);
         trendsFound = trends.length;
         
-        console.log('Debug: Found trends:', trends.length);
-        if (trends.length > 0) {
-          console.log('Debug: First trend:', JSON.stringify(trends[0], null, 2));
-        }
+        // console.log('Debug: Found trends:', trends.length);
+        // if (trends.length > 0) {
+        //   console.log('Debug: First trend:', JSON.stringify(trends[0], null, 2));
+        // }
         
         if (trends.length === 0) {
           return {
@@ -71,22 +71,33 @@ export class CampaignRunner {
       
       // Validate the selected trend
       if (!selectedTrend || !selectedTrend.title) {
-        console.error('Debug: Selected trend validation failed:', selectedTrend);
+        // console.error('Debug: Selected trend validation failed:', selectedTrend);
         throw new Error('Selected trend is invalid or missing title');
       }
       
-      // Generate content
+      // Generate content for all platforms
       const content = await this.contentService.generateContent({
         topic: selectedTrend.title,
         topicId: selectedTrend.id,
-        platforms: ['wechat', 'xhs']
+        platforms: ['wechat', 'xhs', 'googledocs']
       });
       
       // Save to database for approval workflow
-      await (db as any).run(
-        'INSERT INTO content (trend_title, content_text, status, created_at) VALUES (?, ?, ?, ?)',
-        [selectedTrend.title, JSON.stringify(content), 'pending_approval', new Date().toISOString()]
-      );
+      const topicId = (mode === 'custom') ? null : selectedTrend.id;
+      
+      // Save each platform's content separately
+      for (const platformContent of content) {
+        await (db as any).runAsync(
+          'INSERT INTO content (topic_id, platform, title, body, hashtags, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          topicId, 
+          platformContent.platform, 
+          platformContent.title, 
+          platformContent.body, 
+          platformContent.hashtags || null, 
+          'pending_approval', 
+          new Date().toISOString()
+        );
+      }
 
       return {
         trendsFound: trendsFound,

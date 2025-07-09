@@ -13,6 +13,9 @@ export interface PublishingProvider {
 
 export class PublishingValidatorService {
   private googleDocsService: GoogleDocsService;
+  private static lastValidationResult: PublishingProvider[] | null = null;
+  private static lastValidationTime: number = 0;
+  private static validationCacheTime: number = 60000; // 1 minute cache
 
   constructor() {
     this.googleDocsService = new GoogleDocsService();
@@ -20,6 +23,13 @@ export class PublishingValidatorService {
 
   // Check all publishing providers and return their status
   async validatePublishingProviders(): Promise<PublishingProvider[]> {
+    // Check cache first
+    const now = Date.now();
+    if (PublishingValidatorService.lastValidationResult && 
+        (now - PublishingValidatorService.lastValidationTime) < PublishingValidatorService.validationCacheTime) {
+      return PublishingValidatorService.lastValidationResult;
+    }
+
     const providers: PublishingProvider[] = [];
     
     // Load user configuration
@@ -55,6 +65,10 @@ export class PublishingValidatorService {
       required_keys: ['googleDocsCredentials', 'googleDocsFolderId'],
       missing_keys: googleDocsConfigured ? [] : ['googleDocsCredentials']
     });
+
+    // Update cache
+    PublishingValidatorService.lastValidationResult = providers;
+    PublishingValidatorService.lastValidationTime = now;
 
     return providers;
   }
